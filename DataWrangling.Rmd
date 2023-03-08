@@ -1,0 +1,45 @@
+---
+title: "Data Wrangling"
+author: "Martin Olarte"
+date: "2023-03-07"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Web Scraping - NBA Combine Anthro Data
+
+```{r}
+library(tidyverse)
+library(rvest)
+library(readr)
+
+create_anthro_df <- function(season_start_year) {
+  html_tbl <- read_file(paste0("html_tables/",season_start_year,"_", season_start_year+1))
+
+  df <- as.data.frame(read_html(html_tbl) %>% html_table(fill = TRUE))
+  anthro_df <- df %>%
+    mutate(BODY.FAT.. = as.numeric(str_remove(BODY.FAT.., "%")),
+           HAND.LENGTH..inches. = as.numeric(HAND.LENGTH..inches.) * 2.54,
+           HAND.WIDTH..inches. = as.numeric(HAND.WIDTH..inches.) * 2.54,
+           HEIGHT.W.O.SHOES = as.numeric(str_extract(HEIGHT.W.O.SHOES, "\\d+")) * 30.48 + as.numeric(str_extract(gsub(" ", "", HEIGHT.W.O.SHOES), "(?<=')[^']+(?=')")) * 2.54,
+           HEIGHT.W..SHOES = as.numeric(str_extract(HEIGHT.W..SHOES, "\\d+")) * 30.48 + as.numeric(str_extract(gsub(" ", "", HEIGHT.W..SHOES), "(?<=')[^']+(?=')")) * 2.54,
+           STANDING.REACH = as.numeric(str_extract(STANDING.REACH, "\\d+")) * 30.48 + as.numeric(str_extract(gsub(" ", "", STANDING.REACH), "(?<=')[^']+(?=')")) * 2.54,
+           WEIGHT..LBS. = as.numeric(WEIGHT..LBS.),
+           WINGSPAN = as.numeric(str_extract(WINGSPAN, "\\d+")) * 30.48 + as.numeric(str_extract(gsub(" ", "", WINGSPAN), "(?<=')[^']+(?=')")) * 2.54,
+           SEASON_START_YEAR = 2000 + season_start_year)
+  
+  return(anthro_df)
+}
+
+all_anthro <- suppressWarnings(lapply(0:22, create_anthro_df))
+
+all_anthro_df <- do.call(rbind, all_anthro)
+
+all_anthro_df <- all_anthro_df %>%
+  select(PLAYER, SEASON_START_YEAR, everything())
+```
+
+
