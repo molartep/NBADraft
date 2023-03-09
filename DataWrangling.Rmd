@@ -19,7 +19,8 @@ library(readr)
 create_anthro_df <- function(season_start_year) {
   html_tbl <- read_file(paste0("html_tables/",season_start_year,"_", season_start_year+1))
 
-  df <- as.data.frame(read_html(html_tbl) %>% html_table(fill = TRUE))
+  df <- as.data.frame(read_html(html_tbl) %>% 
+                        html_table(fill = TRUE))
   anthro_df <- df %>%
     mutate(BODY.FAT.. = as.numeric(str_remove(BODY.FAT.., "%")),
            HAND.LENGTH..inches. = as.numeric(HAND.LENGTH..inches.) * 2.54,
@@ -42,4 +43,229 @@ all_anthro_df <- all_anthro_df %>%
   select(PLAYER, SEASON_START_YEAR, everything())
 ```
 
+## Download Basketball Reference (BR) Data
+
+Rk -- Rank
+Pos -- Position
+Age -- Player's age on February 1 of the season
+Tm -- Team
+G -- Games
+MP -- Minutes Played
+PER -- Player Efficiency Rating
+A measure of per-minute production standardized such that the league average is 15.
+TS% -- True Shooting Percentage
+A measure of shooting efficiency that takes into account 2-point field goals, 3-point field goals, and free throws.
+3PAr -- 3-Point Attempt Rate
+Percentage of FG Attempts from 3-Point Range
+FTr -- Free Throw Attempt Rate
+Number of FT Attempts Per FG Attempt
+ORB% -- Offensive Rebound Percentage
+An estimate of the percentage of available offensive rebounds a player grabbed while they were on the floor.
+DRB% -- Defensive Rebound Percentage
+An estimate of the percentage of available defensive rebounds a player grabbed while they were on the floor.
+TRB% -- Total Rebound Percentage
+An estimate of the percentage of available rebounds a player grabbed while they were on the floor.
+AST% -- Assist Percentage
+An estimate of the percentage of teammate field goals a player assisted while they were on the floor.
+STL% -- Steal Percentage
+An estimate of the percentage of opponent possessions that end with a steal by the player while they were on the floor.
+BLK% -- Block Percentage
+An estimate of the percentage of opponent two-point field goal attempts blocked by the player while they were on the floor.
+TOV% -- Turnover Percentage
+An estimate of turnovers committed per 100 plays.
+USG% -- Usage Percentage
+An estimate of the percentage of team plays used by a player while they were on the floor.
+OWS -- Offensive Win Shares
+An estimate of the number of wins contributed by a player due to offense.
+DWS -- Defensive Win Shares
+An estimate of the number of wins contributed by a player due to defense.
+WS -- Win Shares
+An estimate of the number of wins contributed by a player.
+WS/48 -- Win Shares Per 48 Minutes
+An estimate of the number of wins contributed by a player per 48 minutes (league average is approximately .100)
+OBPM -- Offensive Box Plus/Minus
+A box score estimate of the offensive points per 100 possessions a player contributed above a league-average player, translated to an average team.
+DBPM -- Defensive Box Plus/Minus
+A box score estimate of the defensive points per 100 possessions a player contributed above a league-average player, translated to an average team.
+BPM -- Box Plus/Minus
+A box score estimate of the points per 100 possessions a player contributed above a league-average player, translated to an average team.
+VORP -- Value over Replacement Player
+A box score estimate of the points per 100 TEAM possessions that a player contributed above a replacement-level (-2.0) player, translated to an average team and prorated to an 82-game season. Multiply by 2.70 to convert to wins over replacement.
+
+```{r}
+# Variable names and descriptions can be found above ^
+create_advanced_stats_df <- function(season_last_year) {
+  url <- paste0("https://www.basketball-reference.com/leagues/NBA_", season_last_year,"_advanced.html")
+  df <- as.data.frame(read_html(url) %>% 
+                        html_table(fill = TRUE))
+  
+  advanced_stats_df <- df %>%
+    select(-c(Rk, Var.20, Var.25)) %>%
+    filter(Player != "Player") %>%
+    mutate(SEASON_START_YEAR = season_last_year - 1) %>%
+    mutate(across(!Player & !Pos & !Tm, as.numeric))
+  
+  return(advanced_stats_df)
+}
+
+all_advanced_stats <- suppressWarnings(lapply(2001:2023, create_advanced_stats_df))
+
+all_advanced_stats_df <- do.call(rbind, all_advanced_stats)
+
+# There are 13892 records
+# Player + Tm (Team) is the unique key
+
+all_advanced_stats_df <- all_advanced_stats_df %>%
+  select(Player, SEASON_START_YEAR, everything())
+```
+
+## Download Kaggle Draft Data
+
+```{r}
+kaggle <- read_csv("all_seasons.csv")
+
+draft_df <- kaggle %>%
+  select(-c(...1, )) %>%
+  select(player_name, season, everything()) %>%
+  mutate(season = as.numeric(str_extract(season, "\\d+")),
+         draft_year = as.numeric(draft_year),
+         draft_round = as.numeric(draft_round),
+         draft_number = as.numeric(draft_number)) %>%
+  filter(!is.na(draft_round)) #filters 2274 Undrafted observations for 761 players
+
+kaggle %>%
+  filter(draft_round == "Undrafted") %>%
+  group_by(player_name) %>%
+  summarise(total = n())
+```
+
+## Merging All Datasets
+
+```{r}
+# PLAYER is the unique key
+all_anthro_df <- read_csv("WrangledData/all_anthro_df.csv")
+
+# 1,480 Players had one entry in the draft combine
+# 36 Players had two entries in the draft combine
+two_entries <- all_anthro_df %>%
+  group_by(PLAYER) %>%
+  summarise(total = n()) %>%
+  filter(total > 1) %>%
+  select(PLAYER) %>%
+  pull()
+
+# Can keep only the last instance a player went to combine, since the only way they redo the combine is if they did not get drafted
+all_anthro_df <- all_anthro_df %>%
+  arrange(PLAYER) %>%
+  group_by(PLAYER) %>%
+  slice(n())
+```
+
+```{r}
+# PLAYER + Tm + SEASON_START_YEAR is the unique key
+all_advanced_stats_df <- read_csv("WrangledData/all_advanced_stats_df.csv")
+
+# 13,892 records when grouped by Player, Tm, SEASON_START_YEAR
+all_advanced_stats_df %>%
+  group_by(Player, Tm, SEASON_START_YEAR) %>%
+  summarise(total = n()) %>%
+  filter(total > 1)
+
+# 2,261 distinct players
+all_advanced_stats_df %>%
+  group_by(Player)
+```
+
+```{r}
+# player_name, team_abbreviation, season is the unique key
+draft_df <- read_csv("WrangledData/draft_df_kaggle.csv")
+
+draft_df <- draft_df %>%
+  filter(season >= 2000)
+
+# 8,536 records when grouped by player_name, team_abbreviation, season
+draft_df %>%
+  group_by(player_name, team_abbreviation, season) %>%
+  summarise(total = n()) %>%
+  filter(total > 1)
+
+# 1,509 distinct players
+draft_df %>%
+  group_by(player_name)
+
+draft_df %>%
+  group_by(draft_number) %>%
+  summarise(total = n())
+
+# Manually checking draft picks beyond the two normal rounds (60 picks)
+draft_df %>%
+  filter(draft_number > 60)
+
+# All other records are correct (double checked online)
+
+# Walker Russell refers to Walker Russell Jr. in stats, but draft information is from Walker Russell Sr.
+draft_df %>%
+  filter(player_name == "Walker Russell")
+
+# Manually removing him since he went undrafted (https://en.wikipedia.org/wiki/Walker_Russell_Jr.)
+draft_df <- draft_df %>%
+  filter(player_name != "Walker Russell")
+
+##### RE RUNNING ANALYSIS
+
+# 8,535 records when grouped by player_name, team_abbreviation, season
+# 1,508 distinct players
+draft_df %>%
+  group_by(player_name)
+```
+```{r}
+# PLAYER is the unique key
+# 1,516 players
+all_anthro_df %>%
+  arrange(SEASON_START_YEAR, PLAYER)
+
+# PLAYER + Tm + SEASON_START_YEAR is the unique key
+# 13,892 records when grouped by Player, Tm, SEASON_START_YEAR
+# 2,261 distinct players
+all_advanced_stats_df %>%
+  arrange(SEASON_START_YEAR, Player)
+
+
+# player_name is the unique key
+# 1,508 distinct players
+draft_df <- draft_df %>%
+  group_by(player_name) %>%
+  slice(n()) %>%
+  select(player_name, college, country, draft_year, draft_round, draft_number)
+
+drafted_players <- draft_df %>%
+  select(player_name) %>%
+  pull()
+
+all_advanced_stats_df <- all_advanced_stats_df %>%
+  filter(Player %in% drafted_players)
+  
+
+advanced_stats_drafted_df <- left_join(all_advanced_stats_df, draft_df, by = c("Player" = "player_name"))
+
+advanced_stats_drafted_df <- advanced_stats_drafted_df %>% 
+  arrange(Player, SEASON_START_YEAR)
+
+full_tbl <- left_join(advanced_stats_drafted_df, all_anthro_df, by = c("Player" = "PLAYER"))
+
+# Create a vector of new column names with proper capitalization and informative names
+new_col_names <- c("Player Name", "Season Start Year", "Position", "Age", "Team", "Games Played", "Minutes Played", 
+                   "Player Efficiency Rating", "True Shooting Percentage", "3-Point Attempt Rate", "Free Throw Rate", 
+                   "Offensive Rebound Percentage", "Defensive Rebound Percentage", "Total Rebound Percentage", 
+                   "Assist Percentage", "Steal Percentage", "Block Percentage", "Turnover Percentage", 
+                   "Usage Percentage", "Offensive Win Shares", "Defensive Win Shares", "Total Win Shares", 
+                   "Win Shares Per 48 Minutes", "Offensive Box Plus/Minus", "Defensive Box Plus/Minus", "Box Plus/Minus", 
+                   "Value Over Replacement Player", "College", "Country", "Draft Year", "Draft Round", "Draft Number", 
+                   "Combine Year", "Combine Position","Body Fat Percentage", "Hand Length (cm)", "Hand Width (cm)", 
+                   "Height Without Shoes (cm)", "Height With Shoes (cm)", "Standing Reach (cm)", 
+                   "Weight (lbs)", "Wingspan")
+
+# Rename the columns in the original dataframe with the new column names
+colnames(full_tbl) <- new_col_names
+```
 
